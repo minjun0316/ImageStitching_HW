@@ -1,0 +1,94 @@
+import numpy as np
+
+from src.harris import detect_harris_corners
+from src.descriptor import extract_patch_descriptors
+from src.matching import knn_match
+from src.homography import apply_homography, compute_homography_least_squares
+from src.warping import backward_warp, blend_average
+
+
+def image_corners(image: np.ndarray) -> np.ndarray:
+    h, w = image.shape[:2]
+    return np.asarray([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32)
+
+
+def compute_panorama_bounds(images: list[np.ndarray], homographies: list[np.ndarray]) -> tuple[int, int, np.ndarray]:
+    all_corners = []
+    for image, h_matrix in zip(images, homographies):
+        corners = image_corners(image)
+        warped = apply_homography(corners, h_matrix)
+        all_corners.append(warped)
+
+    stacked = np.vstack(all_corners)
+    min_xy = np.floor(stacked.min(axis=0)).astype(int)
+    max_xy = np.ceil(stacked.max(axis=0)).astype(int)
+
+    tx = -min_xy[0]
+    ty = -min_xy[1]
+    translation = np.array([[1.0, 0.0, tx], [0.0, 1.0, ty], [0.0, 0.0, 1.0]], dtype=np.float64)
+
+    width = int(max_xy[0] - min_xy[0] + 1)
+    height = int(max_xy[1] - min_xy[1] + 1)
+    return height, width, translation
+
+
+def stitch_three_images(
+    img1: np.ndarray,
+    img2: np.ndarray,
+    img3: np.ndarray,
+    harris_params: dict,
+    descriptor_patch_size: int,
+    ratio_thresh: float,
+) -> dict:
+    corners1, response1 = detect_harris_corners(img1, **harris_params)
+    corners2, response2 = detect_harris_corners(img2, **harris_params)
+    corners3, response3 = detect_harris_corners(img3, **harris_params)
+
+    kp1, desc1 = extract_patch_descriptors(img1, corners1, patch_size=descriptor_patch_size)
+    kp2, desc2 = extract_patch_descriptors(img2, corners2, patch_size=descriptor_patch_size)
+    kp3, desc3 = extract_patch_descriptors(img3, corners3, patch_size=descriptor_patch_size)
+
+    src12, dst12, matches12 = knn_match(kp1, desc1, kp2, desc2, ratio_thresh=ratio_thresh)
+    src32, dst32, matches32 = knn_match(kp3, desc3, kp2, desc2, ratio_thresh=ratio_thresh)
+
+    if len(src12) < 4:
+        raise RuntimeError("Not enough matches between img1 and img2.")
+    if len(src32) < 4:
+        raise RuntimeError("Not enough matches between img3 and img2.")
+
+    h12 = compute_homography_least_squares(src12, dst12)
+    h32 = compute_homography_least_squares(src32, dst32)
+
+    h1_ref = h12
+    h2_ref = np.eye(3, dtype=np.float64)
+    h3_ref = h32
+
+    pano_h, pano_w, translation = compute_panorama_bounds([img1, img2, img3], [h1_ref, h2_ref, h3_ref])
+
+    h1_canvas = translation @ h1_ref
+    h2_canvas = translation @ h2_ref
+    h3_canvas = translation @ h3_ref
+
+    warp1, mask1 = backward_warp(img1, (pano_h, pano_w), h1_canvas)
+    warp2, mask2 = backward_warp(img2, (pano_h, pano_w), h2_canvas)
+    warp3, mask3 = backward_warp(img3, (pano_h, pano_w), h3_canvas)
+
+    panorama = blend_average([warp1, warp2, warp3], [mask1, mask2, mask3])
+
+    return {
+        "corners1": corners1,
+        "corners2": corners2,
+        "corners3": corners3,
+        "response1": response1,
+        "response2": response2,
+        "response3": response3,
+        "matches12_src": src12,
+        "matches12_dst": dst12,
+        "matches32_src": src32,
+        "matches32_dst": dst32,
+        "matches12_meta": matches12,
+        "matches32_meta": matches32,
+        "H12": h12,
+        "H32": h32,
+        "panorama": panorama,
+    }
