@@ -2,9 +2,9 @@ import numpy as np
 
 from src.harris import detect_harris_corners
 from src.descriptor import extract_patch_descriptors
-from src.matching import knn_match
-from src.homography import apply_homography, compute_homography_least_squares
-from src.warping import backward_warp, blend_average
+from src.matching import knn_match_mutual
+from src.homography import apply_homography, compute_homography_ransac
+from src.warping import backward_warp, blend_average, blend_feather, match_overlap_brightness
 
 
 def image_corners(image: np.ndarray) -> np.ndarray:
@@ -39,25 +39,35 @@ def stitch_three_images(
     harris_params: dict,
     descriptor_patch_size: int,
     ratio_thresh: float,
+    descriptor_params: dict | None = None,
+    ransac_params: dict | None = None,
 ) -> dict:
+    descriptor_params = descriptor_params or {}
+    ransac_params = ransac_params or {}
+
     corners1, response1 = detect_harris_corners(img1, **harris_params)
     corners2, response2 = detect_harris_corners(img2, **harris_params)
     corners3, response3 = detect_harris_corners(img3, **harris_params)
 
-    kp1, desc1 = extract_patch_descriptors(img1, corners1, patch_size=descriptor_patch_size)
-    kp2, desc2 = extract_patch_descriptors(img2, corners2, patch_size=descriptor_patch_size)
-    kp3, desc3 = extract_patch_descriptors(img3, corners3, patch_size=descriptor_patch_size)
+    kp1, desc1 = extract_patch_descriptors(img1, corners1, patch_size=descriptor_patch_size, **descriptor_params)
+    kp2, desc2 = extract_patch_descriptors(img2, corners2, patch_size=descriptor_patch_size, **descriptor_params)
+    kp3, desc3 = extract_patch_descriptors(img3, corners3, patch_size=descriptor_patch_size, **descriptor_params)
 
-    src12, dst12, matches12 = knn_match(kp1, desc1, kp2, desc2, ratio_thresh=ratio_thresh)
-    src32, dst32, matches32 = knn_match(kp3, desc3, kp2, desc2, ratio_thresh=ratio_thresh)
+    raw_src12, raw_dst12, matches12 = knn_match_mutual(kp1, desc1, kp2, desc2, ratio_thresh=ratio_thresh)
+    raw_src32, raw_dst32, matches32 = knn_match_mutual(kp3, desc3, kp2, desc2, ratio_thresh=ratio_thresh)
 
-    if len(src12) < 4:
+    if len(raw_src12) < 4:
         raise RuntimeError("Not enough matches between img1 and img2.")
-    if len(src32) < 4:
+    if len(raw_src32) < 4:
         raise RuntimeError("Not enough matches between img3 and img2.")
 
-    h12 = compute_homography_least_squares(src12, dst12)
-    h32 = compute_homography_least_squares(src32, dst32)
+    h12, inliers12 = compute_homography_ransac(raw_src12, raw_dst12, **ransac_params)
+    h32, inliers32 = compute_homography_ransac(raw_src32, raw_dst32, **ransac_params)
+
+    src12 = raw_src12[inliers12]
+    dst12 = raw_dst12[inliers12]
+    src32 = raw_src32[inliers32]
+    dst32 = raw_dst32[inliers32]
 
     h1_ref = h12
     h2_ref = np.eye(3, dtype=np.float64)
@@ -73,7 +83,12 @@ def stitch_three_images(
     warp2, mask2 = backward_warp(img2, (pano_h, pano_w), h2_canvas)
     warp3, mask3 = backward_warp(img3, (pano_h, pano_w), h3_canvas)
 
-    panorama = blend_average([warp1, warp2, warp3], [mask1, mask2, mask3])
+    panorama_raw = blend_average([warp1, warp2, warp3], [mask1, mask2, mask3])
+
+    warp1_brightness = match_overlap_brightness(warp1, mask1, warp2, mask2)
+    warp3_brightness = match_overlap_brightness(warp3, mask3, warp2, mask2)
+    panorama_brightness = blend_average([warp1_brightness, warp2, warp3_brightness], [mask1, mask2, mask3])
+    panorama_feather = blend_feather([warp1_brightness, warp2, warp3_brightness], [mask1, mask2, mask3])
 
     return {
         "corners1": corners1,
@@ -82,13 +97,22 @@ def stitch_three_images(
         "response1": response1,
         "response2": response2,
         "response3": response3,
+        "raw_matches12_src": raw_src12,
+        "raw_matches12_dst": raw_dst12,
+        "raw_matches32_src": raw_src32,
+        "raw_matches32_dst": raw_dst32,
         "matches12_src": src12,
         "matches12_dst": dst12,
         "matches32_src": src32,
         "matches32_dst": dst32,
         "matches12_meta": matches12,
         "matches32_meta": matches32,
+        "matches12_inliers": inliers12,
+        "matches32_inliers": inliers32,
         "H12": h12,
         "H32": h32,
-        "panorama": panorama,
+        "panorama": panorama_feather,
+        "panorama_raw": panorama_raw,
+        "panorama_brightness": panorama_brightness,
+        "panorama_feather": panorama_feather,
     }

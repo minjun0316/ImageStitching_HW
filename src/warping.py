@@ -1,4 +1,5 @@
 import numpy as np
+import cv2
 
 
 def bilinear_interpolate(image: np.ndarray, xs: np.ndarray, ys: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -62,6 +63,34 @@ def backward_warp(
     return warped, mask
 
 
+def match_overlap_brightness(
+    image: np.ndarray,
+    image_mask: np.ndarray,
+    reference: np.ndarray,
+    reference_mask: np.ndarray,
+    min_overlap_pixels: int = 256,
+    gain_limits: tuple[float, float] = (0.8, 1.2),
+) -> np.ndarray:
+    overlap = image_mask & reference_mask
+    if np.count_nonzero(overlap) < min_overlap_pixels:
+        return image
+
+    image_overlap = image[overlap].astype(np.float32)
+    reference_overlap = reference[overlap].astype(np.float32)
+
+    image_luma = 0.299 * image_overlap[:, 0] + 0.587 * image_overlap[:, 1] + 0.114 * image_overlap[:, 2]
+    reference_luma = 0.299 * reference_overlap[:, 0] + 0.587 * reference_overlap[:, 1] + 0.114 * reference_overlap[:, 2]
+
+    image_mean = float(np.mean(image_luma))
+    reference_mean = float(np.mean(reference_luma))
+    if image_mean < 1e-6:
+        return image
+
+    gain = np.clip(reference_mean / image_mean, gain_limits[0], gain_limits[1])
+    adjusted = image.astype(np.float32) * gain
+    return np.clip(adjusted, 0, 255)
+
+
 def blend_average(images: list[np.ndarray], masks: list[np.ndarray]) -> np.ndarray:
     accumulator = np.zeros_like(images[0], dtype=np.float32)
     weight = np.zeros(images[0].shape[:2], dtype=np.float32)
@@ -72,4 +101,39 @@ def blend_average(images: list[np.ndarray], masks: list[np.ndarray]) -> np.ndarr
 
     weight = np.maximum(weight, 1.0)
     blended = accumulator / weight[..., None]
+    return np.clip(blended, 0, 255).astype(np.uint8)
+
+
+def blend_feather(
+    images: list[np.ndarray],
+    masks: list[np.ndarray],
+    blur_size: int = 31,
+) -> np.ndarray:
+    accumulator = np.zeros_like(images[0], dtype=np.float32)
+    weight_sum = np.zeros(images[0].shape[:2], dtype=np.float32)
+
+    kernel_size = max(3, blur_size)
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+
+    for image, mask in zip(images, masks):
+        mask_u8 = mask.astype(np.uint8)
+        if not np.any(mask_u8):
+            continue
+
+        distance = cv2.distanceTransform(mask_u8, cv2.DIST_L2, 3)
+        smooth_weight = cv2.GaussianBlur(distance, (kernel_size, kernel_size), 0)
+        smooth_weight *= mask.astype(np.float32)
+
+        max_weight = float(np.max(smooth_weight))
+        if max_weight > 1e-6:
+            smooth_weight /= max_weight
+        else:
+            smooth_weight = mask.astype(np.float32)
+
+        accumulator += image * smooth_weight[..., None]
+        weight_sum += smooth_weight
+
+    weight_sum = np.maximum(weight_sum, 1e-6)
+    blended = accumulator / weight_sum[..., None]
     return np.clip(blended, 0, 255).astype(np.uint8)

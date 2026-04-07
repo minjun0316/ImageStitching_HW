@@ -27,8 +27,18 @@ def main() -> None:
         img2=img2,
         img3=img3,
         harris_params=harris_params,
-        descriptor_patch_size=11,
-        ratio_thresh=0.75,
+        descriptor_patch_size=17,
+        ratio_thresh=0.7,
+        descriptor_params={
+            "num_cells": 4,
+            "num_bins": 8,
+            "smoothing_sigma": 1.2,
+        },
+        ransac_params={
+            "num_iters": 2000,
+            "inlier_threshold": 3.0,
+            "random_state": 42,
+        },
     )
 
     save_image(str(results_dir / "corners_img1.jpg"), draw_keypoints(img1, results["corners1"]))
@@ -42,9 +52,14 @@ def main() -> None:
         str(results_dir / "matches_23.jpg"),
         draw_matches(img2, results["matches32_dst"], img3, results["matches32_src"]),
     )
+    save_image(str(results_dir / "panorama_raw.jpg"), results["panorama_raw"])
+    save_image(str(results_dir / "panorama_brightness.jpg"), results["panorama_brightness"])
+    save_image(str(results_dir / "panorama_feather.jpg"), results["panorama_feather"])
     save_image(str(results_dir / "panorama.jpg"), results["panorama"])
 
     print("Image stitching completed.")
+    print(f"Mutual matches img1-img2: {len(results['raw_matches12_src'])}, RANSAC inliers: {len(results['matches12_src'])}")
+    print(f"Mutual matches img3-img2: {len(results['raw_matches32_src'])}, RANSAC inliers: {len(results['matches32_src'])}")
     print(f"H12 (img1 -> img2):\n{results['H12']}")
     print(f"H32 (img3 -> img2):\n{results['H32']}")
     print(f"Saved results to: {results_dir}")
