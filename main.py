@@ -44,6 +44,8 @@ def main() -> None:
     save_image(str(results_dir / "corners_img1.jpg"), draw_keypoints(img1, results["corners1"]))
     save_image(str(results_dir / "corners_img2.jpg"), draw_keypoints(img2, results["corners2"]))
     save_image(str(results_dir / "corners_img3.jpg"), draw_keypoints(img3, results["corners3"]))
+    save_image(str(results_dir / "before_matches_warped_img1.jpg"), results["warped_img1"])
+    save_image(str(results_dir / "before_matches_warped_img3.jpg"), results["warped_img3"])
     save_image(
         str(results_dir / "matches_12.jpg"),
         draw_matches(img1, results["matches12_src"], img2, results["matches12_dst"]),
@@ -55,7 +57,15 @@ def main() -> None:
     save_image(str(results_dir / "panorama_raw.jpg"), results["panorama_raw"])
     save_image(str(results_dir / "panorama_brightness.jpg"), results["panorama_brightness"])
     save_image(str(results_dir / "panorama_feather.jpg"), results["panorama_feather"])
-    save_image(str(results_dir / "panorama.jpg"), results["panorama"])
+    legacy_panorama = results_dir / "panorama.jpg"
+    if legacy_panorama.exists():
+        legacy_panorama.unlink()
+    legacy_warp1 = results_dir / "warped_img1.jpg"
+    if legacy_warp1.exists():
+        legacy_warp1.unlink()
+    legacy_warp3 = results_dir / "warped_img3.jpg"
+    if legacy_warp3.exists():
+        legacy_warp3.unlink()
 
     print("Image stitching completed.")
     print(f"Mutual matches img1-img2: {len(results['raw_matches12_src'])}, RANSAC inliers: {len(results['matches12_src'])}")
