@@ -5,14 +5,24 @@ from src.utils import draw_keypoints, draw_matches, load_image, save_image
 
 
 def main() -> None:
+    # pathlib.Path는 파일 경로를 "문자열"이 아니라 "경로 객체"로 다루게 해 준다.
+    # __file__은 현재 실행 중인 main.py의 경로이고, resolve()는 이를 절대경로로 정리한다.
+    # parent를 붙이면 main.py가 들어 있는 프로젝트 루트 폴더를 얻을 수 있다.
     root = Path(__file__).resolve().parent
+    # Path 객체끼리는 "/" 연산자로 경로를 이어 붙일 수 있다.
     data_dir = root / "data"
     results_dir = root / "results"
 
+    # load_image 내부에서는 cv2.imread를 사용한다.
+    # OpenCV는 이미지를 NumPy 배열 형태로 읽고, 채널 순서는 RGB가 아니라 BGR이다.
+    # 이 프로젝트는 img2를 기준 이미지로 두고, img1과 img3를 img2 쪽으로 정렬한다.
     img1 = load_image(str(data_dir / "img1.jpg"))
     img2 = load_image(str(data_dir / "img2.jpg"))
     img3 = load_image(str(data_dir / "img3.jpg"))
 
+    # Harris detector 설정을 dict로 묶어 두면 함수 호출 시 **dict 형태로 한 번에 펼쳐 넘길 수 있다.
+    # 예를 들어 detect_harris_corners(img1, **harris_params)는
+    # detect_harris_corners(img1, max_corners=800, ...)와 같은 뜻이다.
     harris_params = {
         "max_corners": 800,
         "response_thresh_ratio": 0.01,
@@ -22,6 +32,9 @@ def main() -> None:
         "border_margin": 12,
     }
 
+    # stitch_three_images는 이 프로젝트의 핵심 파이프라인 함수다.
+    # 내부에서 코너 검출 -> descriptor 계산 -> 매칭 -> homography -> warping -> blending을 수행한다.
+    # 반환값은 dict이며, 중간 결과(코너, 매칭점, H 행렬)와 최종 결과 이미지가 함께 들어 있다.
     results = stitch_three_images(
         img1=img1,
         img2=img2,
@@ -41,6 +54,9 @@ def main() -> None:
         },
     )
 
+    # draw_keypoints와 draw_matches는 시각화용 보조 함수다.
+    # save_image는 cv2.imwrite를 감싸서 결과를 파일로 저장한다.
+    # results["..."]처럼 dict에서 키로 값을 꺼내 원하는 결과 이미지를 저장한다.
     save_image(str(results_dir / "corners_img1.jpg"), draw_keypoints(img1, results["corners1"]))
     save_image(str(results_dir / "corners_img2.jpg"), draw_keypoints(img2, results["corners2"]))
     save_image(str(results_dir / "corners_img3.jpg"), draw_keypoints(img3, results["corners3"]))
@@ -57,6 +73,9 @@ def main() -> None:
     save_image(str(results_dir / "panorama_raw.jpg"), results["panorama_raw"])
     save_image(str(results_dir / "panorama_brightness.jpg"), results["panorama_brightness"])
     save_image(str(results_dir / "panorama_feather.jpg"), results["panorama_feather"])
+
+    # pathlib의 exists()는 파일 존재 여부를 확인하고, unlink()는 파일을 삭제한다.
+    # 예전 출력 파일명이 남아 있으면 현재 결과와 혼동될 수 있어서 정리한다.
     legacy_panorama = results_dir / "panorama.jpg"
     if legacy_panorama.exists():
         legacy_panorama.unlink()
@@ -67,6 +86,9 @@ def main() -> None:
     if legacy_warp3.exists():
         legacy_warp3.unlink()
 
+    # 터미널 로그는 결과 품질을 빠르게 보는 용도다.
+    # raw_matches는 mutual matching 통과 수, matches는 RANSAC inlier만 남긴 수다.
+    # H12, H32는 각각 img1->img2, img3->img2 호모그래피 행렬이다.
     print("Image stitching completed.")
     print(f"Mutual matches img1-img2: {len(results['raw_matches12_src'])}, RANSAC inliers: {len(results['matches12_src'])}")
     print(f"Mutual matches img3-img2: {len(results['raw_matches32_src'])}, RANSAC inliers: {len(results['matches32_src'])}")
