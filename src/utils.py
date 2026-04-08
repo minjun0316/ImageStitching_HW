@@ -17,10 +17,10 @@ def save_image(path: str, image: np.ndarray) -> None:
     cv2.imwrite(str(output_path), image)
 
 
-def draw_keypoints(image: np.ndarray, keypoints: np.ndarray, color: tuple[int, int, int] = (0, 255, 0)) -> np.ndarray:
+def draw_keypoints(image: np.ndarray, keypoints: np.ndarray, color: tuple[int, int, int] = (0, 0, 255)) -> np.ndarray:
     canvas = image.copy()
     for x, y in keypoints.astype(int):
-        cv2.circle(canvas, (x, y), 3, color, 1)
+        cv2.circle(canvas, (x, y), 6, color, 2)
     return canvas
 
 
@@ -43,7 +43,7 @@ def draw_matches(
         x1, y1 = kp1[idx].astype(int)
         x2, y2 = kp2[idx].astype(int)
         color = tuple(int(c) for c in np.random.randint(0, 255, size=3))
-        cv2.circle(canvas, (x1, y1), 4, color, 1)
-        cv2.circle(canvas, (x2 + w1, y2), 4, color, 1)
-        cv2.line(canvas, (x1, y1), (x2 + w1, y2), color, 1)
+        cv2.circle(canvas, (x1, y1), 6, color, 2)
+        cv2.circle(canvas, (x2 + w1, y2), 6, color, 2)
+        cv2.line(canvas, (x1, y1), (x2 + w1, y2), color, 2)
     return canvas
