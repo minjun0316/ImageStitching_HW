@@ -53,6 +53,8 @@ def compute_homography_ransac(
 ) -> tuple[np.ndarray, np.ndarray]:
     # RANSAC은 "랜덤 샘플로 모델 추정 -> 모든 점에서 오차 계산 -> inlier 수 비교"를 반복한다.
     # 잘못된 매칭(outlier)이 섞여 있어도 가장 일관된 변환을 찾기 쉽다.
+    # 여기서 제거 대상은 "descriptor 상으로는 매칭됐지만, 같은 평면 변환을 따른다고 보기 어려운 correspondence"다.
+    # 즉 KNN matching은 비슷한 patch를 찾는 단계이고, RANSAC은 그 match들이 기하학적으로 말이 되는지 검증하는 단계다.
     if len(src_pts) < 4 or len(dst_pts) < 4:
         raise ValueError("At least 4 point correspondences are required for RANSAC.")
 
@@ -76,6 +78,7 @@ def compute_homography_ransac(
             continue
 
         # threshold보다 오차가 작은 점만 inlier로 본다.
+        # reprojection error가 크면 현재 homography로 설명되지 않는 match이므로 outlier 취급한다.
         inlier_mask = errors < inlier_threshold
 
         # 현재까지 가장 많은 inlier를 설명하는 모델을 유지한다.
@@ -87,5 +90,6 @@ def compute_homography_ransac(
         raise RuntimeError("RANSAC failed to find a valid homography.")
 
     # 가장 좋은 inlier 집합으로 homography를 다시 추정해 최종 결과로 사용한다.
+    # 따라서 최종 homography는 "RANSAC이 남긴 inlier들만"으로 계산된다.
     refined_h = compute_homography_least_squares(src_pts[best_inlier_mask], dst_pts[best_inlier_mask])
     return refined_h, best_inlier_mask
